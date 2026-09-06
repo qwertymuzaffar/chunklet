@@ -42,9 +42,13 @@
     "build": "tsup",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.2",
     "@vitest/coverage-v8": "4.1.11",
     "tsup": "^8.5.0",
     "typescript": "^5.9.2",
