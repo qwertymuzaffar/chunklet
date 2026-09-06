@@ -1,0 +1,53 @@
+{
+  "name": "chunklet",
+  "version": "0.1.0",
+  "description": "Token-aware, structure-aware text chunking for RAG - exact source offsets, sentence and markdown modes, pluggable tokenizer, zero dependencies.",
+  "keywords": [
+    "rag",
+    "chunking",
+    "text-splitter",
+    "chunk",
+    "llm",
+    "embeddings",
+    "tokens",
+    "markdown",
+    "semantic-search",
+    "retrieval"
+  ],
+  "license": "MIT",
+  "author": "Muzaffar Qosimov",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qwertymuzaffar/chunklet.git"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "4.1.11",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.8"
+  }
+}
