@@ -6,13 +6,13 @@
 
 Token-aware, structure-aware text chunking for RAG pipelines - **zero dependencies**, runs in Node, browsers, and edge runtimes.
 
-The differentiator: **exact source offsets**. Every chunk guarantees
+Two ideas define it. **Exact source offsets**: every chunk guarantees
 
 ```ts
 chunk.text === source.slice(chunk.start, chunk.end)
 ```
 
-so you can highlight citations, deep-link retrieval hits, or map an answer back to the original document - things you cannot do when your splitter normalizes whitespace behind your back.
+so you can highlight citations, deep-link retrieval hits, or store embeddings without storing text. And **structure awareness**: chunks respect the document - markdown sections with heading breadcrumbs, whole sentences, atomic code fences - and a word is never cut in half unless a single word exceeds the budget.
 
 ## Install
 
@@ -91,6 +91,11 @@ chunkText(doc, { maxTokens: 512, tokenizer: (t) => enc.encode(t).length });
 | `tokens` | Token count per the active tokenizer |
 | `index` | 0-based position |
 | `meta.headings` | Markdown heading breadcrumb (markdown mode) |
+
+## Alternatives
+
+- [llm-splitter](https://www.npmjs.com/package/llm-splitter) - offset-tracked chunks with a bring-your-own splitter function. chunklet adds the structural layer: markdown sections with heading breadcrumbs, atomic code fences, `Intl.Segmenter` sentence boundaries, and hierarchical fallback so chunks land on natural boundaries.
+- LangChain / LlamaIndex text splitters - similar strategies inside much larger frameworks; reach for chunklet when you want the splitter without the framework.
 
 ## Roadmap
 
