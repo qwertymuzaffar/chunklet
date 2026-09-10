@@ -138,167 +138,200 @@ function skipElement(lower: string, from: number, name: string): number {
   return end === -1 ? lower.length : end + 1;
 }
 
+/** The break a block-level tag introduces, or null for an inline tag. */
+function breakRankOf(name: string, isHeading: boolean): number | null {
+  if (isHeading || PARAGRAPH_TAGS.has(name)) return PARAGRAPH_BREAK;
+  if (LINE_TAGS.has(name)) return LINE_BREAK;
+  if (CELL_TAGS.has(name)) return CELL_BREAK;
+  return null;
+}
+
 /**
  * Turns HTML into readable text plus the block and heading structure the
  * chunker needs. Block elements become paragraph, line or cell breaks,
  * whitespace collapses like a browser renders it (except inside <pre>),
  * script/style/template/svg/iframe content and comments are dropped, and
  * entities are decoded. Every character of the text maps back to the HTML.
+ *
+ * One instance extracts one document: the fields are the scanner's state
+ * (the open block, the pending break, the heading breadcrumb, whether a
+ * <pre> or a block-level <code> is open) and the methods are its transitions.
  */
-function extract(html: string): Extraction {
-  const lower = html.toLowerCase();
-  let text = '';
-  const starts: number[] = [];
-  const ends: number[] = [];
-  const sections: HtmlSection[] = [];
-  const headingStack: { level: number; title: string }[] = [];
-  let section: HtmlSection = { headings: [], blocks: [] };
-  let block: { start: number; atomic: boolean } | null = null;
-  let contentEnd = 0;
-  let pendingBreak = 0;
-  let breakPosition = 0;
-  let preformatted = 0;
-  let headingLevel: number | null = null;
-  let codeOpenedBlock = false;
-  let codeJustClosed = false;
+class HtmlExtractor {
+  private readonly lower: string;
+  private text = '';
+  private readonly starts: number[] = [];
+  private readonly ends: number[] = [];
+  private readonly sections: HtmlSection[] = [];
+  private readonly headingStack: { level: number; title: string }[] = [];
+  private section: HtmlSection = { headings: [], blocks: [] };
+  private block: { start: number; atomic: boolean } | null = null;
+  private contentEnd = 0;
+  private pendingBreak = 0;
+  private breakPosition = 0;
+  private preformatted = 0;
+  private headingLevel: number | null = null;
+  private codeOpenedBlock = false;
+  private codeJustClosed = false;
 
-  const push = (piece: string, from: number, to: number) => {
-    for (let unit = 0; unit < piece.length; unit++) {
-      starts.push(from);
-      ends.push(to);
-    }
-    text += piece;
-  };
+  /** Opening tags with a transition of their own; every other tag is a block boundary or inline. */
+  private readonly openers = new Map<string, (tag: Tag) => void>([
+    ['br', (tag) => {
+      if (this.block) this.push('\n', tag.start, tag.end);
+    }],
+    ['pre', (tag) => {
+      this.breakAt(PARAGRAPH_BREAK, tag.start);
+      this.preformatted++;
+    }],
+    ['code', () => {
+      if (this.preformatted === 0 && !this.block) this.codeOpenedBlock = true;
+    }],
+  ]);
 
-  const content = (piece: string, from: number, to: number) => {
-    if (codeJustClosed) {
-      // text followed the </code>, so it was inline code, not a code block
-      if (block) block.atomic = preformatted > 0;
-      codeJustClosed = false;
-    }
-    if (!block) {
-      if (pendingBreak > 0 && text.length > 0) push(BREAK_TEXT[pendingBreak], breakPosition, breakPosition);
-      pendingBreak = 0;
-      block = { start: text.length, atomic: preformatted > 0 };
-    }
-    push(piece, from, to);
-    contentEnd = text.length;
-  };
+  /** Closing tags with a transition of their own. */
+  private readonly closers = new Map<string, (position: number) => void>([
+    ['pre', (position) => {
+      this.preformatted = Math.max(0, this.preformatted - 1);
+      this.breakAt(PARAGRAPH_BREAK, position);
+    }],
+    ['code', () => {
+      if (!this.codeOpenedBlock || !this.block) return;
+      // atomic unless text follows within the same block
+      this.block.atomic = true;
+      this.codeJustClosed = true;
+      this.codeOpenedBlock = false;
+    }],
+  ]);
 
-  const whitespace = (piece: string, from: number, to: number) => {
-    if (!block) return; // leading whitespace in a block: the pending break already separates it
-    if (preformatted > 0) push(piece, from, to);
-    else if (!WHITESPACE.test(text[text.length - 1])) push(' ', from, to);
-  };
-
-  const closeBlock = () => {
-    if (block) section.blocks.push({ start: block.start, end: contentEnd, atomic: block.atomic });
-    block = null;
-    codeOpenedBlock = false;
-    codeJustClosed = false;
-  };
-
-  const finishHeading = () => {
-    if (headingLevel === null) return;
-    const title = block ? text.slice(block.start, contentEnd).trim() : '';
-    while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= headingLevel) headingStack.pop();
-    if (title) headingStack.push({ level: headingLevel, title });
-    section.headings = headingStack.map((entry) => entry.title);
-    headingLevel = null;
-  };
-
-  const breakAt = (rank: number, position: number) => {
-    finishHeading();
-    closeBlock();
-    if (rank > pendingBreak) {
-      pendingBreak = rank;
-      breakPosition = position;
-    }
-  };
-
-  const lineBreak = (from: number, to: number) => {
-    if (block) push('\n', from, to);
-  };
-
-  const closeCode = () => {
-    if (!codeOpenedBlock || !block) return;
-    // atomic unless text follows within the same block
-    block.atomic = true;
-    codeJustClosed = true;
-    codeOpenedBlock = false;
-  };
-
-  const openHeading = (level: number, position: number) => {
-    breakAt(PARAGRAPH_BREAK, position);
-    if (section.blocks.length > 0) sections.push(section);
-    section = { headings: section.headings, blocks: [] };
-    headingLevel = level;
-  };
-
-  let at = 0;
-  while (at < html.length) {
-    const char = html[at];
-    if (char === '<') {
-      const markup = readMarkup(html, at);
-      if (markup === null) {
-        content('<', at, at + 1);
-        at++;
-        continue;
-      }
-      if ('skipTo' in markup) {
-        at = markup.skipTo;
-        continue;
-      }
-      at = markup.end;
-      const { name } = markup;
-      const heading = HEADING_TAG.exec(name);
-      if (markup.closing) {
-        if (name === 'pre') {
-          preformatted = Math.max(0, preformatted - 1);
-          breakAt(PARAGRAPH_BREAK, markup.start);
-        } else if (heading || PARAGRAPH_TAGS.has(name)) {
-          breakAt(PARAGRAPH_BREAK, markup.start);
-        } else if (LINE_TAGS.has(name)) {
-          breakAt(LINE_BREAK, markup.start);
-        } else if (CELL_TAGS.has(name)) {
-          breakAt(CELL_BREAK, markup.start);
-        } else if (name === 'code') {
-          closeCode();
-        }
-      } else if (SKIPPED_TAGS.has(name)) {
-        if (!markup.selfClosing) at = skipElement(lower, at, name);
-      } else if (name === 'br') {
-        lineBreak(markup.start, markup.end);
-      } else if (name === 'pre') {
-        breakAt(PARAGRAPH_BREAK, markup.start);
-        preformatted++;
-      } else if (heading) {
-        openHeading(Number(heading[1]), markup.start);
-      } else if (PARAGRAPH_TAGS.has(name)) {
-        breakAt(PARAGRAPH_BREAK, markup.start);
-      } else if (LINE_TAGS.has(name)) {
-        breakAt(LINE_BREAK, markup.start);
-      } else if (CELL_TAGS.has(name)) {
-        breakAt(CELL_BREAK, markup.start);
-      } else if (name === 'code' && preformatted === 0 && !block) {
-        codeOpenedBlock = true;
-      }
-      continue;
-    }
-    if (char === '&') {
-      const entity = decodeEntity(html, at);
-      if (entity) {
-        if (entity.text !== '') (WHITESPACE.test(entity.text) ? whitespace : content)(entity.text, at, at + entity.length);
-        at += entity.length;
-        continue;
-      }
-    }
-    (WHITESPACE.test(char) ? whitespace : content)(char, at, at + 1);
-    at++;
+  constructor(private readonly html: string) {
+    this.lower = html.toLowerCase();
   }
-  breakAt(PARAGRAPH_BREAK, html.length);
-  if (section.blocks.length > 0) sections.push(section);
-  return { text, starts, ends, sections };
+
+  /** Scans the document once: markup goes to handleTag, everything else is text. */
+  run(): Extraction {
+    const { html } = this;
+    let at = 0;
+    while (at < html.length) {
+      const char = html[at];
+      if (char === '<') {
+        const markup = readMarkup(html, at);
+        if (markup === null) {
+          this.content('<', at, at + 1);
+          at++;
+          continue;
+        }
+        at = 'skipTo' in markup ? markup.skipTo : this.handleTag(markup);
+        continue;
+      }
+      if (char === '&') {
+        const entity = decodeEntity(html, at);
+        if (entity) {
+          if (WHITESPACE.test(entity.text)) this.whitespace(entity.text, at, at + entity.length);
+          else if (entity.text !== '') this.content(entity.text, at, at + entity.length);
+          at += entity.length;
+          continue;
+        }
+      }
+      if (WHITESPACE.test(char)) this.whitespace(char, at, at + 1);
+      else this.content(char, at, at + 1);
+      at++;
+    }
+    this.breakAt(PARAGRAPH_BREAK, html.length);
+    if (this.section.blocks.length > 0) this.sections.push(this.section);
+    return { text: this.text, starts: this.starts, ends: this.ends, sections: this.sections };
+  }
+
+  /** Applies a tag's effect on the state and returns where scanning resumes. */
+  private handleTag(tag: Tag): number {
+    const heading = HEADING_TAG.exec(tag.name);
+    if (tag.closing) {
+      this.closeTag(tag.name, heading !== null, tag.start);
+      return tag.end;
+    }
+    if (SKIPPED_TAGS.has(tag.name)) return tag.selfClosing ? tag.end : skipElement(this.lower, tag.end, tag.name);
+    this.openTag(tag, heading);
+    return tag.end;
+  }
+
+  private closeTag(name: string, isHeading: boolean, position: number): void {
+    const special = this.closers.get(name);
+    if (special) return special(position);
+    const rank = breakRankOf(name, isHeading);
+    if (rank !== null) this.breakAt(rank, position);
+  }
+
+  private openTag(tag: Tag, heading: RegExpExecArray | null): void {
+    const special = this.openers.get(tag.name);
+    if (special) return special(tag);
+    if (heading) return this.openHeading(Number(heading[1]), tag.start);
+    const rank = breakRankOf(tag.name, false);
+    if (rank !== null) this.breakAt(rank, tag.start);
+  }
+
+  private push(piece: string, from: number, to: number): void {
+    for (let unit = 0; unit < piece.length; unit++) {
+      this.starts.push(from);
+      this.ends.push(to);
+    }
+    this.text += piece;
+  }
+
+  private content(piece: string, from: number, to: number): void {
+    if (this.codeJustClosed) {
+      // text followed the </code>, so it was inline code, not a code block
+      if (this.block) this.block.atomic = this.preformatted > 0;
+      this.codeJustClosed = false;
+    }
+    if (!this.block) {
+      if (this.pendingBreak > 0 && this.text.length > 0) this.push(BREAK_TEXT[this.pendingBreak], this.breakPosition, this.breakPosition);
+      this.pendingBreak = 0;
+      this.block = { start: this.text.length, atomic: this.preformatted > 0 };
+    }
+    this.push(piece, from, to);
+    this.contentEnd = this.text.length;
+  }
+
+  private whitespace(piece: string, from: number, to: number): void {
+    if (!this.block) return; // leading whitespace in a block: the pending break already separates it
+    if (this.preformatted > 0) this.push(piece, from, to);
+    else if (!WHITESPACE.test(this.text[this.text.length - 1])) this.push(' ', from, to);
+  }
+
+  private closeBlock(): void {
+    if (this.block) this.section.blocks.push({ start: this.block.start, end: this.contentEnd, atomic: this.block.atomic });
+    this.block = null;
+    this.codeOpenedBlock = false;
+    this.codeJustClosed = false;
+  }
+
+  private finishHeading(): void {
+    if (this.headingLevel === null) return;
+    const title = this.block ? this.text.slice(this.block.start, this.contentEnd).trim() : '';
+    while (this.headingStack.length > 0 && this.headingStack[this.headingStack.length - 1].level >= this.headingLevel) this.headingStack.pop();
+    if (title) this.headingStack.push({ level: this.headingLevel, title });
+    this.section.headings = this.headingStack.map((entry) => entry.title);
+    this.headingLevel = null;
+  }
+
+  private breakAt(rank: number, position: number): void {
+    this.finishHeading();
+    this.closeBlock();
+    if (rank > this.pendingBreak) {
+      this.pendingBreak = rank;
+      this.breakPosition = position;
+    }
+  }
+
+  private openHeading(level: number, position: number): void {
+    this.breakAt(PARAGRAPH_BREAK, position);
+    if (this.section.blocks.length > 0) this.sections.push(this.section);
+    this.section = { headings: this.section.headings, blocks: [] };
+    this.headingLevel = level;
+  }
+}
+
+function extract(html: string): Extraction {
+  return new HtmlExtractor(html).run();
 }
 
 /**
