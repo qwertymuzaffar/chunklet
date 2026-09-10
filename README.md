@@ -12,7 +12,7 @@ Two ideas define it. **Exact source offsets**: every chunk guarantees
 chunk.text === source.slice(chunk.start, chunk.end)
 ```
 
-so you can highlight citations, deep-link retrieval hits, or store embeddings without storing text. And **structure awareness**: chunks respect the document - markdown sections with heading breadcrumbs, whole sentences, atomic code fences - and a word is never cut in half unless a single word exceeds the budget.
+so you can highlight citations, deep-link retrieval hits, or store embeddings without storing text. And **structure awareness**: chunks respect the document - markdown sections with heading breadcrumbs, whole sentences, atomic code fences, whole declarations in source files - and a word is never cut in half unless a single word exceeds the budget.
 
 ## Install
 
@@ -43,7 +43,7 @@ Every chunk is:
   end: number;     // character offset, exclusive
   tokens: number;  // per the active tokenizer
   index: number;   // 0-based position
-  meta?: { headings?: string[] }; // markdown mode
+  meta?: { headings?: string[]; language?: string; symbol?: string }; // markdown / code modes
 }
 ```
 
@@ -92,6 +92,25 @@ What it does differently:
 - **Sections follow the headings.** A chunk never crosses an ATX heading (`#` through `######`), so retrieval hits map cleanly to document sections.
 - **Every chunk knows where it lives.** `meta.headings` is the breadcrumb of enclosing headings, outermost first. Content before the first heading gets `[]`.
 - **Code fences are atomic.** A fenced block is never merged mid-fence with prose, and only split internally (line by line) when the fence alone exceeds the budget.
+
+## Code mode
+
+```ts
+import { chunkCode } from 'chunklet';
+
+const chunks = chunkCode(source, { maxTokens: 512, language: 'ts' });
+
+chunks[2].text;           // "/** Loads one file. */\nexport async function load(name: string) {..."
+chunks[2].meta?.symbol;   // 'export async function load(name: string): Promise<string> {'
+chunks[2].meta?.language; // 'ts'
+```
+
+Source files are split at declarations, not at arbitrary lines:
+
+- **Declarations are the unit.** A top-level declaration starts at an unindented line that follows a blank line or a closing bracket (or opens the file). Comment lines directly above it belong to it, so a doc comment stays with its function. A declaration that fits the budget is never split, and small ones are packed together.
+- **Oversized declarations split at structure.** A class or function over the budget starts its own chunks and is cut at blank lines before its least-indented members first (methods before the statements inside them), then after closing brackets and at dedents, then at line breaks. A chunk never starts mid-line unless a single line alone exceeds the budget.
+- **Every chunk can say where it came from.** `meta.symbol` is the first line of the enclosing top-level declaration (comments and decorators skipped) whenever the chunk sits inside one declaration with an indented body; imports and one-liners get none. `meta.language` echoes the hint.
+- **Language agnostic.** Boundaries come from indentation and blank lines, so anything indented consistently works. The `language` hint only decides what counts as a comment line (`//` and `/* */` for the C family, `#` for Python and shells, `--` for SQL and Lua, ...); without it every common marker is recognized.
 
 ## Recipes
 
@@ -153,6 +172,7 @@ The tokenizer is called on candidate slices during packing, so a heavyweight tok
 | `chunkText(text, options?)` | Hierarchical separator splitting (paragraphs > lines > sentences > words) |
 | `chunkSentences(text, options?)` | Sentence-boundary packing via `Intl.Segmenter` |
 | `chunkMarkdown(text, options?)` | Heading-aware sections + breadcrumbs, atomic code fences |
+| `chunkCode(source, options?)` | Declaration-aware splitting for source files, `meta.symbol` + `meta.language` |
 | `estimateTokens(text)` | The default chars/4 heuristic |
 
 ### Options
@@ -162,6 +182,7 @@ The tokenizer is called on candidate slices during packing, so a heavyweight tok
 | `maxTokens` | `512` | Token budget per chunk |
 | `overlap` | `0` | Tokens of trailing context repeated at the start of the next chunk (must be < `maxTokens`) |
 | `tokenizer` | chars/4 | `(text: string) => number` |
+| `language` | - | `chunkCode` only: comment-syntax hint (`'ts'`, `'python'`, `'sql'`, ...), echoed as `meta.language` |
 
 Invalid options throw `RangeError`. Empty or whitespace-only input returns `[]`.
 
@@ -172,7 +193,6 @@ Invalid options throw `RangeError`. Empty or whitespace-only input returns `[]`.
 
 ## Roadmap
 
-- `chunkCode` - blank-line and indentation-aware splitting for source files
 - HTML mode
 
 ## License

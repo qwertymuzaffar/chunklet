@@ -4,6 +4,10 @@ export type Tokenizer = (text: string) => number;
 export interface ChunkMeta {
   /** Markdown heading breadcrumb, outermost first (chunkMarkdown only). */
   headings?: string[];
+  /** The language hint passed to chunkCode, echoed back (chunkCode only). */
+  language?: string;
+  /** First line of the enclosing top-level declaration, trimmed (chunkCode only). */
+  symbol?: string;
 }
 
 export interface Chunk {
