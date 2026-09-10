@@ -223,19 +223,28 @@ const everyLine: CutRule = (lines, fromLine, toLine) =>
 
 const CUT_RULES: readonly CutRule[] = [afterBlankLine, afterStructure, everyLine];
 
+/** What every split of one source file shares: the text, its lines and the options. */
+interface SplitContext {
+  source: string;
+  lines: CodeLine[];
+  opts: ResolvedOptions;
+}
+
+interface LineRange {
+  fromLine: number;
+  toLine: number;
+}
+
 /**
  * Turns the lines [fromLine, toLine] into pieces that fit the budget. A
  * segment that fits stays whole; one that does not is cut at the most
  * structural boundary available, then each part is refined the same way.
  * Only a single line that alone exceeds the budget is split inside a line.
  */
-function splitLines(
-  source: string,
-  lines: CodeLine[],
-  fromLine: number,
-  toLine: number,
-  opts: ResolvedOptions,
-): Piece[] {
+function splitLines(range: LineRange, context: SplitContext): Piece[] {
+  const { source, lines, opts } = context;
+  const { fromLine } = range;
+  let { toLine } = range;
   while (toLine > fromLine && lines[toLine].blank) toLine--;
   const piece = { start: lines[fromLine].start, end: lines[toLine].end };
   if (opts.tokenizer(source.slice(piece.start, piece.end)) <= opts.maxTokens) return [piece];
@@ -246,7 +255,7 @@ function splitLines(
     const bounds = [fromLine, ...cuts, toLine + 1];
     const pieces: Piece[] = [];
     for (let position = 0; position + 1 < bounds.length; position++) {
-      for (const part of splitLines(source, lines, bounds[position], bounds[position + 1] - 1, opts)) {
+      for (const part of splitLines({ fromLine: bounds[position], toLine: bounds[position + 1] - 1 }, context)) {
         pieces.push(part);
       }
     }
@@ -279,6 +288,7 @@ export function chunkCode(source: string, options: CodeChunkOptions = {}): Chunk
   if (source.trim().length === 0) return [];
   const lines = toCodeLines(source, commentMarkers(options.language));
   const declarations = findDeclarations(lines);
+  const context: SplitContext = { source, lines, opts };
   const chunks: Chunk[] = [];
   let group: Piece[] = [];
   const flush = () => {
@@ -286,7 +296,7 @@ export function chunkCode(source: string, options: CodeChunkOptions = {}): Chunk
     group = [];
   };
   for (const declaration of declarations) {
-    const pieces = splitLines(source, lines, declaration.fromLine, declaration.toLine, opts);
+    const pieces = splitLines(declaration, context);
     if (pieces.length === 1) {
       group.push(pieces[0]);
       continue;
