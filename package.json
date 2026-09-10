@@ -1,6 +1,6 @@
 {
   "name": "chunklet",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Token-aware, structure-aware text chunking for RAG - exact source offsets, sentence, markdown, code and HTML modes, pluggable tokenizer, zero dependencies.",
   "keywords": [
     "rag",
