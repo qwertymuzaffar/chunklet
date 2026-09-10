@@ -1,7 +1,7 @@
 {
   "name": "chunklet",
   "version": "0.1.1",
-  "description": "Token-aware, structure-aware text chunking for RAG - exact source offsets, sentence and markdown modes, pluggable tokenizer, zero dependencies.",
+  "description": "Token-aware, structure-aware text chunking for RAG - exact source offsets, sentence, markdown, code and HTML modes, pluggable tokenizer, zero dependencies.",
   "keywords": [
     "rag",
     "chunking",
@@ -12,7 +12,9 @@
     "tokens",
     "markdown",
     "semantic-search",
-    "retrieval"
+    "retrieval",
+    "code",
+    "html"
   ],
   "license": "MIT",
   "author": "Muzaffar Qosimov",
