@@ -2,12 +2,14 @@
 export type Tokenizer = (text: string) => number;
 
 export interface ChunkMeta {
-  /** Markdown heading breadcrumb, outermost first (chunkMarkdown only). */
+  /** Heading breadcrumb, outermost first (chunkMarkdown and chunkHtml). */
   headings?: string[];
   /** The language hint passed to chunkCode, echoed back (chunkCode only). */
   language?: string;
   /** First line of the enclosing top-level declaration, trimmed (chunkCode only). */
   symbol?: string;
+  /** Range in the original HTML that produced this chunk's text (chunkHtml only). */
+  source?: { start: number; end: number };
 }
 
 export interface Chunk {

@@ -12,7 +12,7 @@ Two ideas define it. **Exact source offsets**: every chunk guarantees
 chunk.text === source.slice(chunk.start, chunk.end)
 ```
 
-so you can highlight citations, deep-link retrieval hits, or store embeddings without storing text. And **structure awareness**: chunks respect the document - markdown sections with heading breadcrumbs, whole sentences, atomic code fences, whole declarations in source files - and a word is never cut in half unless a single word exceeds the budget.
+so you can highlight citations, deep-link retrieval hits, or store embeddings without storing text. And **structure awareness**: chunks respect the document - markdown and HTML sections with heading breadcrumbs, whole sentences, atomic code fences, whole declarations in source files - and a word is never cut in half unless a single word exceeds the budget.
 
 ## Install
 
@@ -43,7 +43,7 @@ Every chunk is:
   end: number;     // character offset, exclusive
   tokens: number;  // per the active tokenizer
   index: number;   // 0-based position
-  meta?: { headings?: string[]; language?: string; symbol?: string }; // markdown / code modes
+  meta?: { headings?: string[]; language?: string; symbol?: string; source?: { start: number; end: number } }; // markdown / code / html modes
 }
 ```
 
@@ -112,6 +112,26 @@ Source files are split at declarations, not at arbitrary lines:
 - **Every chunk can say where it came from.** `meta.symbol` is the first line of the enclosing top-level declaration (comments and decorators skipped) whenever the chunk sits inside one declaration with an indented body; imports and one-liners get none. `meta.language` echoes the hint.
 - **Language agnostic.** Boundaries come from indentation and blank lines, so anything indented consistently works. The `language` hint only decides what counts as a comment line (`//` and `/* */` for the C family, `#` for Python and shells, `--` for SQL and Lua, ...); without it every common marker is recognized.
 
+## HTML mode
+
+```ts
+import { chunkHtml } from 'chunklet';
+
+const { text, chunks } = chunkHtml(page, { maxTokens: 512 });
+
+chunks[3].text;           // "Run the installer as shown below."
+chunks[3].meta?.headings; // ['Guide', 'Install']
+chunks[3].meta?.source;   // { start: 1043, end: 1076 } - range in the original HTML
+text.slice(chunks[3].start, chunks[3].end) === chunks[3].text; // true
+```
+
+`chunkHtml` extracts readable text first and chunks that, so offsets refer to the returned `text`, not to the HTML. `meta.source` maps each chunk back to the HTML range that produced it, so highlighting in the page is still a slice: `page.slice(source.start, source.end)` is the markup between the chunk's first and last character. The extractor is a small tolerant tag scanner, not a full parser, with no dependencies:
+
+- **Structure survives.** Block elements (`p`, `div`, headings, `li`, `td`, ...) become paragraph, line or cell boundaries; inline elements disappear; runs of whitespace collapse to one space, the way a browser renders them.
+- **Headings become breadcrumbs.** `h1` through `h6` drive sections exactly like markdown mode, and every chunk carries `meta.headings`.
+- **Code stays whole.** `<pre>` blocks keep their whitespace and are never merged mid-block with prose; a `<code>` element that stands alone as a block is treated the same way, while inline `<code>` is plain text. They split internally, line by line, only when one alone exceeds the budget.
+- **Noise is dropped.** `<script>`, `<style>`, `<template>`, `<svg>`, `<iframe>` and comments contribute nothing. Common named entities, `&#169;` and `&#x1F600;` are decoded; `&nbsp;` becomes a plain space; unknown entities stay literal. Stray `<` in text and unclosed tags are tolerated.
+
 ## Recipes
 
 ### RAG ingestion
@@ -173,6 +193,7 @@ The tokenizer is called on candidate slices during packing, so a heavyweight tok
 | `chunkSentences(text, options?)` | Sentence-boundary packing via `Intl.Segmenter` |
 | `chunkMarkdown(text, options?)` | Heading-aware sections + breadcrumbs, atomic code fences |
 | `chunkCode(source, options?)` | Declaration-aware splitting for source files, `meta.symbol` + `meta.language` |
+| `chunkHtml(html, options?)` | Readable-text extraction + heading breadcrumbs; returns `{ text, chunks }` with `meta.source` ranges into the HTML |
 | `estimateTokens(text)` | The default chars/4 heuristic |
 
 ### Options
@@ -190,10 +211,6 @@ Invalid options throw `RangeError`. Empty or whitespace-only input returns `[]`.
 
 - [llm-splitter](https://www.npmjs.com/package/llm-splitter) - offset-tracked chunks with a bring-your-own splitter function. chunklet adds the structural layer: markdown sections with heading breadcrumbs, atomic code fences, `Intl.Segmenter` sentence boundaries, and hierarchical fallback so chunks land on natural boundaries.
 - LangChain / LlamaIndex text splitters - similar strategies inside much larger frameworks; reach for chunklet when you want the splitter without the framework.
-
-## Roadmap
-
-- HTML mode
 
 ## License
 
